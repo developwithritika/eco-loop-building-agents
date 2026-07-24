@@ -1,165 +1,353 @@
-# Architecture: Eco-Loop Building Agents
+# Eco-Loop Building Agents – System Architecture
 
-This document describes the internal architecture of the Eco-Loop
-Building Agents system: how each layer is structured, what it owns, and
-how data flows through the full feedback loop.
+## 1. Overview
 
-## High-Level Flow
+Eco-Loop Building Agents is an AI-powered proof-of-concept that demonstrates autonomous energy management for a smart building using a closed-loop control architecture.
 
-```
-Building Simulation
-        |
-FastAPI / MCP Server
-        |
-LLM Agent
-        |
-Decision Engine
-        |
-Update Building State
-        |
-     (repeat)
-```
+The system continuously monitors simulated building conditions, evaluates them using a Large Language Model (LLM), recommends optimal control actions, and applies those actions back to the building state.
 
-The system is a closed control loop. At every cycle:
+The objective is to improve operational efficiency while maintaining occupant comfort.
 
-1. The simulation advances, producing a new `BuildingState`.
-2. That state is handed to the LLM agent.
-3. The agent returns a single decision (an action plus a reason).
-4. The decision engine validates the action and applies it back onto
-   the simulation, mutating the building's state.
-5. The loop repeats, so the building's trajectory is shaped by the
-   cumulative effect of every past decision.
+---
 
-## Simulation Layer (`simulator.py`)
+# 2. Problem Statement
 
-**Responsibility:** own the ground-truth physical and energy state of
-the building, and know how to advance it realistically over time.
+Commercial buildings consume a significant amount of energy due to inefficient operation of lighting, HVAC systems, and other electrical loads.
 
-- `BuildingSimulator` holds a single `BuildingState` instance.
-- `generate_state()` advances the simulation by one cycle. Each
-  variable (indoor temperature, outdoor temperature, occupancy, solar
-  generation, battery level, lighting, grid usage) is updated using a
-  bounded random walk, with some variables also depending on
-  time-of-day (solar generation, occupancy) and on other variables in
-  the same cycle (indoor temperature depends on outdoor temperature and
-  current HVAC mode; grid usage depends on HVAC, lighting, and
-  occupancy).
-- `apply_action(action)` maps a named action (e.g. `"Increase
-  Cooling"`) onto concrete state mutations, such as switching
-  `hvac_mode` or discharging the battery. Unknown actions are treated
-  as no-ops rather than errors, so a single bad decision from the LLM
-  layer cannot crash the simulation.
-- `reset()` returns the simulator to a fresh, plausible initial state.
-- All values are clamped to physically realistic ranges (e.g.
-  temperature between 10C and 40C, battery between 0% and 100%) so the
-  simulation never drifts into nonsensical territory.
+Traditional building automation systems rely on predefined rules that cannot adapt well to changing environmental conditions.
 
-This layer has no dependency on FastAPI or the LLM SDK — it is pure
-Python and fully unit-testable in isolation.
+This project demonstrates how an AI agent can continuously analyse building conditions and make intelligent control decisions in real time.
 
-## API Layer (`server.py`)
+---
 
-**Responsibility:** expose the simulation over HTTP so it can be
-observed or controlled by any client — the bundled controller, a
-dashboard, or an external MCP-compatible agent.
+# 3. System Components
 
-- Built with FastAPI, using the shared Pydantic models from
-  `models.py` for request and response validation.
-- `GET /state` returns the current `BuildingState` without mutating it.
-- `POST /action` accepts an `ActionRequest`, applies it via
-  `BuildingSimulator.apply_action()`, and returns an `ActionResponse`
-  containing both the applied action and the resulting state.
-- `GET /health` provides a minimal liveness endpoint suitable for
-  container orchestration or uptime monitoring.
-- A single process-wide `BuildingSimulator` instance backs the API.
-  This keeps the example simple; a production system would instead key
-  simulator instances by building ID in a registry or database.
+The application consists of six primary modules.
 
-This layer is intentionally thin: it performs no decision-making of its
-own and delegates all physical logic to the simulation layer.
+## 3.1 Building Simulator
 
-## LLM Layer (`llm.py`)
-
-**Responsibility:** turn a `BuildingState` into a single, well-formed
-control decision, using a language model as the reasoning engine.
-
-- `LLMAgent` wraps an OpenAI-compatible chat completion client.
-- The system prompt fixes the agent's optimisation priorities, in
-  order: occupant comfort, minimum electricity cost, renewable energy
-  usage, and battery optimisation. It also enumerates the closed set of
-  valid actions and the reasoning heuristics the agent should apply
-  (e.g. cool when hot and occupied, turn off lights when empty, prefer
-  solar when abundant).
-- The agent is instructed to respond with **only** a JSON object of the
-  shape `{"action": "...", "reason": "..."}` — no markdown, no
-  commentary — which keeps downstream parsing simple and reliable.
-- `_extract_json()` defensively strips stray code fences and pulls out
-  the first `{...}` block before parsing, tolerating minor formatting
-  slips from the model.
-- If the API call fails, times out, returns malformed JSON, or invents
-  an action outside the allowed vocabulary, `decide()` transparently
-  falls back to `_fallback_decision()` — a deterministic, rule-based
-  implementation of the same heuristics given to the LLM. This
-  guarantees the control loop always receives a valid decision, with or
-  without a working LLM connection.
-
-## Decision Layer (`controller.py` + `simulator.py.apply_action`)
-
-**Responsibility:** connect the LLM's chosen action back to a concrete
-state mutation, and orchestrate the end-to-end loop.
-
-- `BuildingController` owns its own `BuildingSimulator` and
-  `LLMAgent` instances (independent from the ones used by the API
-  server, since the controller is designed to also run standalone).
-- `run_single_cycle()` performs one full iteration: generate state,
-  request a decision, apply the decision, and print a clearly formatted
-  log of the current state, the decision and its reason, and the
-  resulting updated state.
-- `run_forever()` repeats `run_single_cycle()` on a fixed interval
-  (`CONTROLLER_INTERVAL_SECONDS`, default 5 seconds), and can be
-  stopped cleanly with `Ctrl+C`.
-- Validation of the action against the allowed vocabulary happens
-  inside `LLMAgent.decide()`, before the decision ever reaches the
-  simulator — the decision layer is therefore split across the LLM
-  layer (validation) and the simulation layer (physical effect), with
-  the controller purely orchestrating the sequence.
-
-## Feedback Loop
-
-The defining property of this architecture is that it is a **closed
-loop**, not a single request/response cycle:
+**File**
 
 ```
-state_t -> LLM decision -> action applied -> state_(t+1) -> LLM decision -> ...
+simulator.py
 ```
 
-Each decision changes the building's `hvac_mode`, `lighting_level`,
-`battery_level`, or `grid_energy_usage`, and those changes feed directly
-into how the simulation evolves on the next cycle (for example, cooling
-mode actively lowers indoor temperature in the next
-`generate_state()` call). This means the LLM agent's decisions have
-lasting, compounding effects on the building — much like a real
-building management system — rather than being evaluated against a
-static, unchanging environment.
+Responsibilities
 
-## Configuration (`config.py`)
+- Simulates building conditions
+- Generates environmental data
+- Maintains current building state
+- Updates values after control actions
 
-All tunable values and secrets are loaded from environment variables via
-`python-dotenv`, exposed through a single immutable `Settings`
-dataclass (`settings`). No API keys or environment-specific values are
-hardcoded anywhere in the codebase; `.env.example` documents every
-supported variable.
+Example parameters include:
 
-## Data Contracts (`models.py`)
+- Indoor temperature
+- Outside temperature
+- Occupancy
+- Solar generation
+- Battery level
+- Grid energy usage
+- Lighting level
+- HVAC mode
 
-All cross-layer data exchange uses Pydantic models defined once and
-shared everywhere:
+---
 
-- `BuildingState` — the full observable state of the building.
-- `ActionRequest` / `ActionResponse` — the API's action contract.
-- `LLMDecision` — the strict schema the LLM agent's JSON output is
-  parsed into, and the same schema used by the rule-based fallback.
+## 3.2 FastAPI Server
 
-Centralising these models in one module guarantees that the simulator,
-the LLM agent, the API layer, and the controller all agree on exactly
-the same shape of data, eliminating an entire class of integration bugs.
+**File**
+
+```
+server.py
+```
+
+Responsibilities
+
+- Provides REST API endpoints
+- Exposes current building state
+- Receives AI control actions
+- Allows external applications to interact with the simulation
+
+Endpoints
+
+GET /state
+
+Returns current building information.
+
+POST /action
+
+Applies AI-generated actions.
+
+GET /health
+
+Returns server health status.
+
+---
+
+## 3.3 LLM Decision Engine
+
+**File**
+
+```
+llm.py
+```
+
+Responsibilities
+
+- Converts building state into a structured prompt
+- Sends prompt to the language model
+- Receives reasoning
+- Produces recommended control actions
+
+Typical decisions include
+
+- Turn lights on
+- Turn lights off
+- Increase HVAC
+- Reduce HVAC
+- Maintain current state
+
+---
+
+## 3.4 Controller
+
+**File**
+
+```
+controller.py
+```
+
+Responsibilities
+
+- Reads current building state
+- Invokes the LLM
+- Applies returned action
+- Updates simulator
+- Repeats continuously
+
+The controller forms the core autonomous feedback loop.
+
+---
+
+## 3.5 Configuration
+
+**File**
+
+```
+config.py
+```
+
+Stores application configuration such as
+
+- API keys
+- Simulation parameters
+- Default settings
+
+---
+
+## 3.6 Data Models
+
+**File**
+
+```
+models.py
+```
+
+Defines the request and response models used by the FastAPI application.
+
+This ensures consistent communication between different components.
+
+---
+
+# 4. Closed-Loop Workflow
+
+The complete execution pipeline is shown below.
+
+```
+Building Simulator
+        │
+        ▼
+Generate Building State
+        │
+        ▼
+FastAPI Server
+        │
+        ▼
+LLM Decision Engine
+        │
+        ▼
+Recommended Action
+        │
+        ▼
+Controller
+        │
+        ▼
+Updated Building State
+        │
+        ▼
+Repeat
+```
+
+The cycle executes continuously throughout the simulation.
+
+---
+
+# 5. AI Decision Process
+
+The LLM analyses several building parameters before selecting an action.
+
+These include:
+
+- Indoor temperature
+- Outdoor temperature
+- Occupancy
+- Lighting level
+- Solar generation
+- Battery level
+- Grid energy consumption
+- HVAC mode
+
+The language model evaluates these values and returns both:
+
+- Recommended action
+- Explanation for the decision
+
+Example
+
+Current State
+
+Occupancy = 0
+
+Lighting = 25%
+
+Decision
+
+Turn Off Lights
+
+Reason
+
+The building is currently unoccupied, therefore lighting is unnecessary.
+
+---
+
+# 6. Prompt Engineering Strategy
+
+The language model receives a structured prompt containing:
+
+- Current building metrics
+- Operating constraints
+- Available control actions
+
+The prompt instructs the model to:
+
+1. Analyse the building state.
+2. Recommend one control action.
+3. Explain the reasoning.
+4. Avoid unnecessary actions.
+
+This structured format improves response consistency and simplifies parsing.
+
+---
+
+# 7. API Design
+
+The REST API enables communication between external applications and the simulator.
+
+Current endpoints
+
+| Endpoint | Method | Purpose |
+|----------|---------|----------|
+| /state | GET | Returns current building state |
+| /action | POST | Applies AI action |
+| /health | GET | Returns service status |
+
+The API is implemented using FastAPI.
+
+---
+
+# 8. Prompt Latency Management
+
+The system minimises unnecessary LLM requests by:
+
+- Processing one simulation cycle at a time
+- Using compact prompts
+- Returning structured responses
+- Avoiding repeated requests for unchanged states
+
+This keeps inference latency low while maintaining responsiveness.
+
+---
+
+# 9. Error Handling
+
+The application includes basic safeguards for:
+
+- Invalid API requests
+- Missing configuration
+- Invalid actions
+- Unexpected LLM responses
+
+FastAPI validation prevents malformed requests from reaching the controller.
+
+---
+
+# 10. Scalability
+
+The modular architecture allows individual components to be replaced independently.
+
+Possible future extensions include:
+
+- Multiple buildings
+- IoT sensor integration
+- Database storage
+- Real-time dashboards
+- Cloud deployment
+- Multi-agent coordination
+
+---
+
+# 11. Future EnergyPlus Integration
+
+The current implementation uses a lightweight Python simulator to demonstrate the autonomous control pipeline.
+
+The simulator is intentionally isolated behind a modular interface.
+
+In future versions, the simulator can be replaced by an EnergyPlus API wrapper that:
+
+- Loads .idf building models
+- Streams simulation metrics
+- Accepts AI-generated control actions
+- Executes real EnergyPlus simulations
+- Measures actual energy savings
+
+This preserves the existing controller and LLM logic while upgrading the simulation engine.
+
+---
+
+# 12. Current Limitations
+
+Current implementation limitations include:
+
+- Python-based simulator instead of EnergyPlus
+- No live IoT devices
+- No historical database
+- No graphical dashboard
+- Single-building simulation
+- Cloud deployment not included
+
+These limitations were intentionally accepted to rapidly demonstrate the autonomous AI control architecture.
+
+---
+
+# 13. Conclusion
+
+Eco-Loop Building Agents demonstrates a complete closed-loop AI control pipeline for intelligent building energy management.
+
+The project integrates:
+
+- Building simulation
+- REST APIs
+- Large Language Models
+- Autonomous control
+- Continuous feedback
+
+The modular architecture allows future integration with EnergyPlus, open-source LLMs, dashboards, and real-world building management systems with minimal architectural changes.
