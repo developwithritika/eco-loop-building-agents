@@ -1,202 +1,287 @@
 # Eco-Loop Building Agents
 
-An AI-powered building energy management system. A simulated smart
-building continuously reports its environmental and energy state to an
-LLM agent, which chooses actions that reduce energy consumption while
-keeping occupants comfortable. The loop repeats indefinitely, closing
-the feedback cycle between sensing, reasoning, and control.
+AI-powered autonomous building energy management system built using Python, FastAPI, and an LLM-based decision engine.
+
+---
 
 ## Project Overview
 
-Eco-Loop Building Agents demonstrates a full, working agentic control
-system built from four cooperating layers:
+Eco-Loop Building Agents is a proof-of-concept smart building controller that demonstrates how Artificial Intelligence can continuously monitor building conditions and automatically recommend energy-efficient control actions.
 
-1. **Simulation Layer** (`simulator.py`) — generates realistic building
-   telemetry (temperature, occupancy, solar generation, battery level,
-   grid usage, lighting) and applies control actions to that state.
-2. **API Layer** (`server.py`) — a FastAPI service exposing the building
-   state and accepting control actions over HTTP, so the building can be
-   observed or driven by any external client.
-3. **LLM Layer** (`llm.py`) — an agent that prompts an LLM with the
-   current building state and receives a single JSON-encoded decision,
-   with a deterministic rule-based fallback if the LLM is unavailable.
-4. **Decision / Feedback Loop** (`controller.py`) — orchestrates the
-   other three layers in a continuous cycle: observe, decide, act, log,
-   repeat.
+The project follows a closed-loop architecture:
+
+1. Collect building state
+2. Analyse the state using an LLM
+3. Generate an optimal control decision
+4. Apply the control action
+5. Repeat continuously
+
+The objective is to reduce unnecessary energy consumption while maintaining occupant comfort.
+
+---
+
+## Features
+
+- AI-powered decision making
+- Closed-loop control architecture
+- Building environment simulator
+- FastAPI REST API
+- HVAC control
+- Smart lighting control
+- Battery monitoring
+- Solar generation monitoring
+- Modular Python architecture
+- Easily extendable for real-world building integrations
+
+---
 
 ## Architecture
 
 ```
-Building Simulation
-        |
-FastAPI / MCP Server
-        |
-LLM Agent
-        |
-Decision Engine
-        |
-Update Building State
-        |
-     (repeat)
+                    +----------------------+
+                    |  Building Simulator  |
+                    +----------------------+
+                               |
+                               v
+                    +----------------------+
+                    |  FastAPI REST API    |
+                    +----------------------+
+                               |
+                               v
+                    +----------------------+
+                    |    LLM Decision      |
+                    |      Engine          |
+                    +----------------------+
+                               |
+                               v
+                    +----------------------+
+                    |   Controller Agent   |
+                    +----------------------+
+                               |
+                               v
+                    +----------------------+
+                    | Updated Building     |
+                    | State                |
+                    +----------------------+
 ```
 
-See [architecture.md](architecture.md) for a detailed breakdown of each
-layer's responsibilities and how they interact.
+---
 
-## Folder Structure
+## Project Structure
 
 ```
 eco-loop-building-agents/
-|-- simulator.py       Building simulation engine (BuildingSimulator)
-|-- llm.py              LLM decision agent (LLMAgent) with rule-based fallback
-|-- server.py           FastAPI HTTP server exposing /state and /action
-|-- controller.py       Standalone control loop tying everything together
-|-- models.py           Pydantic models shared across all layers
-|-- config.py           Environment-based configuration (dotenv)
-|-- requirements.txt    Python dependencies
-|-- .env.example        Template for required environment variables
-|-- README.md           This file
-|-- architecture.md     Detailed architecture documentation
+
+├── controller.py      # Main AI control loop
+├── server.py          # FastAPI REST server
+├── simulator.py       # Building simulator
+├── llm.py             # LLM interaction
+├── models.py          # Data models
+├── config.py          # Configuration
+├── requirements.txt   # Python dependencies
+├── architecture.md    # System architecture
+├── README.md
+└── .env.example
 ```
+
+---
+
+## Technologies Used
+
+- Python 3.12
+- FastAPI
+- OpenAI API
+- Pydantic
+- Uvicorn
+- Requests
+- Python Dotenv
+
+---
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.11 or newer
-- An OpenAI-compatible API key (optional — the system runs on a
-  rule-based fallback engine if no key is provided)
-
-### Steps
+Clone the repository
 
 ```bash
-# 1. Clone or copy the project, then move into it
+git clone https://github.com/developwithritika/eco-loop-building-agents.git
+```
+
+Move into the project
+
+```bash
 cd eco-loop-building-agents
+```
 
-# 2. Create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate        # On Windows: venv\Scripts\activate
+Create virtual environment
 
-# 3. Install dependencies
+```bash
+python -m venv .venv
+```
+
+Activate it
+
+Windows
+
+```bash
+.venv\Scripts\activate
+```
+
+Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-## Setup: Environment Variables
+---
 
-Copy the example environment file and fill in your own values:
-
-```bash
-cp .env.example .env
-```
-
-| Variable                       | Description                                             | Default       |
-|---------------------------------|-----------------------------------------------------------|---------------|
-| `OPENAI_API_KEY`                | API key for the LLM provider (OpenAI-compatible)          | *(required for LLM mode)* |
-| `OPENAI_MODEL`                  | Chat completion model used by the agent                   | `gpt-4o-mini` |
-| `SERVER_HOST`                   | Host the FastAPI server binds to                           | `0.0.0.0`     |
-| `SERVER_PORT`                   | Port the FastAPI server binds to                            | `8000`        |
-| `CONTROLLER_INTERVAL_SECONDS`   | Seconds between controller decision cycles                  | `5`           |
-| `COMFORT_TEMP_MIN`              | Lower bound of the comfort temperature band (Celsius)        | `20.0`        |
-| `COMFORT_TEMP_MAX`              | Upper bound of the comfort temperature band (Celsius)        | `26.0`        |
-
-If `OPENAI_API_KEY` is left empty, `LLMAgent` automatically uses its
-built-in deterministic rule-based decision engine, so the whole system
-remains fully runnable without any external API access.
-
-## Running the Simulator Standalone
-
-You can exercise the simulator directly in a Python shell to see raw
-state transitions without the API or LLM involved:
+## Running the API
 
 ```bash
-python3 -c "
-from simulator import BuildingSimulator
-sim = BuildingSimulator()
-for _ in range(3):
-    print(sim.generate_state())
-"
+uvicorn server:app --reload
 ```
 
-## Running the API Server
+Server starts at
+
+```
+http://127.0.0.1:8000
+```
+
+Swagger Documentation
+
+```
+http://127.0.0.1:8000/docs
+```
+
+---
+
+## Running the Controller
 
 ```bash
-uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+python controller.py
 ```
 
-Once running, interactive API docs are available at
-`http://localhost:8000/docs`.
+The controller continuously:
 
-### Endpoints
+- Reads the current building state
+- Sends the state to the LLM
+- Receives an intelligent decision
+- Updates the simulator
+- Repeats the process
 
-| Method | Path      | Description                                    |
-|--------|-----------|-------------------------------------------------|
-| GET    | `/state`  | Returns the current building state               |
-| POST   | `/action` | Applies a control action, returns updated state  |
-| GET    | `/health` | Liveness check                                    |
+---
 
-Example request:
+## API Endpoints
 
-```bash
-curl -X POST http://localhost:8000/action \
-  -H "Content-Type: application/json" \
-  -d '{"action": "Increase Cooling", "reason": "Manual override"}'
+### GET /state
+
+Returns the current building status.
+
+Example response
+
+```json
+{
+  "temperature": 21.5,
+  "outside_temperature": 18.3,
+  "occupancy": 2,
+  "solar_generation": 0,
+  "battery_level": 58.5,
+  "grid_energy_usage": 0,
+  "lighting_level": 7,
+  "hvac_mode": "off"
+}
 ```
 
-## Running the Controller (Full Feedback Loop)
+---
 
-The controller runs the simulation, LLM agent, and decision engine
-together in a continuous loop, printing each cycle to the console:
+### POST /action
 
-```bash
-python3 controller.py
+Applies an AI-generated control action.
+
+---
+
+### GET /health
+
+Returns API health status.
+
+---
+
+## Example Controller Output
+
+```
+Current State
+
+Temperature : 21.5°C
+
+Occupancy : 0
+
+Lighting : 22%
+
+LLM Decision
+
+Turn Off Lights
+
+Reason
+
+Building is unoccupied.
+
+Updated State
+
+Lighting : 0%
 ```
 
-Press `Ctrl+C` to stop the loop cleanly.
+---
 
-## Sample Output
+## Current Workflow
 
-```
-============================================================
-CYCLE 1  [14:32:07 UTC]
-============================================================
-Current State:
-    temperature........ 27.40 C
-    outside_temp....... 29.10 C
-    occupancy.......... 18
-    solar_generation... 6.20 kW
-    battery_level...... 64.30 %
-    grid_energy_usage.. 4.80 kW
-    lighting_level..... 55.00 %
-    hvac_mode.......... off
+1. Simulator generates building state
 
-LLM Decision:
-    action: Increase Cooling
-    reason: Indoor temperature exceeds comfort threshold with occupants present.
+2. Controller collects data
 
-Updated State:
-    temperature........ 27.40 C
-    outside_temp....... 29.10 C
-    occupancy.......... 18
-    solar_generation... 6.20 kW
-    battery_level...... 64.30 %
-    grid_energy_usage.. 4.80 kW
-    lighting_level..... 55.00 %
-    hvac_mode.......... cooling
-```
+3. State is sent to the LLM
+
+4. LLM recommends an action
+
+5. Controller updates simulator
+
+6. Process repeats
+
+---
 
 ## Future Improvements
 
-- Persist building state and decision history to a database for
-  long-term analytics and dashboards.
-- Add a WebSocket endpoint for live-streaming state updates to a
-  front-end dashboard.
-- Support multiple simultaneous buildings, each with its own simulator
-  and agent instance, coordinated by a shared scheduler.
-- Introduce a proper MCP (Model Context Protocol) server wrapper around
-  the API so any MCP-compatible agent framework can drive the building.
-- Add historical trend analysis so the LLM agent can reason about
-  patterns over time, not just the current instantaneous state.
-- Add automated tests (pytest) covering simulator physics, action
-  handlers, and JSON-parsing edge cases in the LLM agent.
-- Support multi-zone buildings with independent HVAC and lighting per
-  floor or room.
+This proof-of-concept has been intentionally designed with a modular architecture.
+
+Future enhancements include:
+
+- EnergyPlus integration
+- Importing .idf building models
+- Open-source LLM deployment (Llama/Mistral/Qwen)
+- MCP server integration
+- Live IoT sensor support
+- Energy consumption dashboard
+- Historical analytics
+- Carbon footprint reporting
+
+---
+
+## Limitations
+
+The current implementation uses a lightweight Python-based building simulator instead of a live EnergyPlus simulation engine.
+
+The simulator has been designed as a modular component and can be replaced by an EnergyPlus API wrapper in future versions without modifying the AI controller logic.
+
+---
+
+## Author
+
+**Ritika Roy**
+
+GitHub
+
+https://github.com/developwithritika
+
+---
+
+## License
+
+This project has been created for educational and hackathon purposes.
